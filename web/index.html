@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>王者荣耀知识库问答</title>
+<style>
+  :root { --blue: #2563eb; --muted: #6b7280; --line: #e5e7eb; }
+  * { box-sizing: border-box; }
+  body { max-width: 760px; margin: 24px auto; padding: 0 16px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #111827; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 22px; margin: 0; }
+  .badge { font-size: 12px; color: var(--muted); border: 1px solid var(--line); padding: 2px 8px; border-radius: 999px; }
+  #chat { min-height: 320px; border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-top: 14px; }
+  .q { color: var(--blue); margin: 8px 0; font-weight: 600; }
+  .a { white-space: pre-wrap; line-height: 1.65; margin: 8px 0; }
+  .cite { font-size: 12px; margin: 2px 0 10px; }
+  .cite a { color: var(--blue); text-decoration: none; margin-right: 6px; }
+  .status { color: var(--muted); font-size: 13px; margin: 4px 0; }
+  #bar { display: flex; gap: 8px; margin-top: 12px; }
+  #q { flex: 1; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 15px; }
+  button { padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: wait; }
+  .samples { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .samples button { font-size: 12px; padding: 6px 10px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>王者荣耀知识库问答</h1>
+  <span class="badge">知识库快照：2016</span>
+  <span class="badge">Hybrid RAG + SSE</span>
+</header>
+<div id="chat"></div>
+<div class="samples">
+  <button onclick="ask('名刀多少钱')">名刀多少钱</button>
+  <button onclick="ask('帽子是哪个装备')">帽子是哪个装备</button>
+  <button onclick="ask('妲己二技能晕多久')">妲己二技能晕多久</button>
+</div>
+<div id="bar">
+  <input id="q" placeholder="试试：名刀多少钱" autofocus>
+  <button id="send" onclick="ask()">发送</button>
+  <button onclick="clearSession()">清空会话</button>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

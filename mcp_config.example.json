@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "wzry-rag": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "mcp_server.server"],
+      "env": {
+        "MCP_TRANSPORT": "stdio",
+        "EMBED_API_KEY": "your-key",
+        "REDIS_URL": "redis://127.0.0.1:6379/0"
+      }
+    }
+  }
+}

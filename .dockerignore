@@ -1,0 +1,10 @@
+.git
+.venv
+local-reports
+reports
+chroma_db
+data/raw
+.env
+__pycache__
+.pytest_cache
+.ruff_cache

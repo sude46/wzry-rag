@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# Local-only analysis, reports and interview notes
+local-reports/
+analysis.md
+reports/
+eval/results_*.jsonl
+eval/*results*.jsonl
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+
+# Generated / large artifacts
+chroma_db/
+data/raw/
+data/chunks.ingest/
+*.log
+.DS_Store

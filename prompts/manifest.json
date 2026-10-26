@@ -1,0 +1,5 @@
+{
+  "answer": {"file": "answer_v2.txt", "version": "v2"},
+  "rewrite": {"file": "rewrite_v2.txt", "version": "v2"},
+  "summary": {"file": "summary_v1.txt", "version": "v1"}
+}
