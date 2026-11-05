@@ -25,7 +25,10 @@ lint:
 	uv run ruff check .
 
 eval:
-	RETRIEVER=hybrid uv run python eval/run_eval.py
+	GEN=0 RETRIEVER=hybrid uv run python eval/run_eval.py eval/dataset_80_v2.jsonl
+
+eval-gen:
+	GEN=1 RETRIEVER=hybrid uv run python eval/run_eval.py eval/dataset_80_v2.jsonl
 
 clean:
 	rm -rf .pytest_cache .ruff_cache __pycache__ */__pycache__ */*/__pycache__

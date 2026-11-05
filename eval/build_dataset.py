@@ -1,26 +1,43 @@
-"""eval/build_dataset.py — Day9: 半自动生成 80 条评估集骨架"""
+"""Build a question-level skeleton with doc-level gold ids.
+
+The old version attached every document of a subject to every question. This
+version maps each question to the document that actually answers it and adds
+same-hero / same-category hard negatives.
+
+Usage: uv run python eval/build_dataset.py
+"""
+from __future__ import annotations
+
 import json
 import random
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from eval.gold import (  # noqa: E402
+    BY_ID,
+    find_basic_doc,
+    find_item_doc,
+    find_skill_doc,
+    hard_negatives,
+)
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+DOCS_PATH = BASE_DIR / "data" / "processed" / "docs.jsonl"
+SYNONYMS_PATH = BASE_DIR / "eval" / "synonyms.json"
+OUT = BASE_DIR / "eval" / "dataset_80.skeleton.jsonl"
+
 random.seed(42)
-
-docs = [json.loads(l) for l in open("data/processed/docs.jsonl", encoding="utf-8")]
-synonyms = json.load(open("eval/synonyms.json", encoding="utf-8"))
-
+docs = [json.loads(line) for line in DOCS_PATH.read_text(encoding="utf-8").splitlines()]
+synonyms = json.loads(SYNONYMS_PATH.read_text(encoding="utf-8"))
 print("字段名:", list(docs[0].keys()))
 print("类型分布:", Counter(d["type"] for d in docs))
-
-# 自动探测 id 字段(可能叫 id / doc_id / chunk_id)
-ID_KEY = next(k for k in ("id", "doc_id", "chunk_id", "uid") if k in docs[0])
-print("id 字段:", ID_KEY)
 
 skills = [d for d in docs if d["type"] == "技能"]
 items = [d for d in docs if d["type"] == "装备"]
 heroes_docs = [d for d in docs if d["type"] == "英雄"]
-
 all_heroes = {d["subject"] for d in heroes_docs}
 skill_heroes = {d["subject"] for d in skills}
 no_skill_heroes = sorted(all_heroes - skill_heroes)
@@ -28,24 +45,43 @@ print(f"有技能英雄: {len(skill_heroes)}, 无技能英雄(拒答素材): {le
 
 SKILL_HEAD = re.compile(r"^(.*?)的(被动|一技能|二技能|三技能|四技能|大招)「(.*?)」")
 
-by_subject = {}
-for d in docs:
-    by_subject.setdefault(d["subject"], []).append(d)
+
+def make_entry(
+    idx: int,
+    prefix: str,
+    question: str,
+    qtype: str,
+    subject: str,
+    ground_truth: str,
+    gold_doc_ids: list[str],
+    hard_negative_doc_ids: list[str],
+    *,
+    expect_refusal: bool = False,
+    **extra,
+) -> dict:
+    return {
+        "id": f"{prefix}_{idx:03d}",
+        "question": question,
+        "type": qtype,
+        "subject": subject,
+        "ground_truth": ground_truth,
+        "gold_doc_ids": gold_doc_ids,
+        "hard_negative_doc_ids": hard_negative_doc_ids,
+        "expect_refusal": expect_refusal,
+        "version": "2016-snapshot",
+        **extra,
+    }
 
 
-def make_entry(idx, prefix, question, qtype, subject, ground_truth, version="S35"):
-    rel = [d[ID_KEY] for d in by_subject.get(subject, [])][:10]
-    return {"id": f"{prefix}_{idx:03d}", "question": question, "type": qtype,
-            "ground_truth": ground_truth, "relevant_doc_ids": rel, "version": version}
+entries: list[dict] = []
 
-
-entries = []
-
-# ---- 机制类 25 条 ----
+# ---- mechanics: 25 ----
 random.shuffle(skills)
-mech_templates = {"被动": ["{h}的被动是什么", "{h}的被动有什么用"],
-                  "大招": ["{h}的大招是什么", "{h}的大招效果是什么"],
-                  "default": ["{h}的{label}是什么", "{h}的{label}有什么用"]}
+mech_templates = {
+    "被动": ["{h}的被动是什么", "{h}的被动有什么用"],
+    "大招": ["{h}的大招是什么", "{h}的大招效果是什么"],
+    "default": ["{h}的{label}是什么", "{h}的{label}有什么用"],
+}
 n_mech = 0
 for d in skills:
     if n_mech >= 25:
@@ -53,54 +89,113 @@ for d in skills:
     m = SKILL_HEAD.match(d["text"])
     if not m:
         continue
-    hero, label, sname = m.groups()
+    hero, label, _ = m.groups()
     if "冷却值" in d["text"] and label != "被动" and random.random() < 0.3:
         q = f"{hero}的{label}冷却多久"
     else:
-        q = random.choice(mech_templates.get(label, mech_templates["default"])).format(h=hero, label=label)
-    entries.append(make_entry(n_mech, "mech", q, "机制", hero, d["text"]))
+        q = random.choice(mech_templates.get(label, mech_templates["default"])).format(
+            h=hero, label=label
+        )
+    gold = [find_skill_doc(hero, label)]
+    entries.append(
+        make_entry(
+            n_mech,
+            "mech",
+            q,
+            "机制",
+            hero,
+            BY_ID[gold[0]]["text"],
+            gold,
+            hard_negatives(gold[0], hero, "机制"),
+        )
+    )
     n_mech += 1
 
-# ---- 拒答类 5 条 ----
+# ---- refusal: 5 ----
 for i, hero in enumerate(no_skill_heroes[:5]):
-    entries.append(make_entry(i, "refuse", f"{hero}的大招是什么", "拒答", hero,
-                              "知识库未收录该英雄的技能数据，正确行为是拒答并说明未收录。"))
+    entries.append(
+        make_entry(
+            i,
+            "refuse",
+            f"{hero}的大招是什么",
+            "拒答",
+            hero,
+            "知识库未收录该英雄的技能数据，正确行为是拒答并说明未收录。",
+            [],
+            [],
+            expect_refusal=True,
+        )
+    )
 
-# ---- 装备类 20 条 ----
+# ---- items: 20 ----
 item_subjects = sorted({d["subject"] for d in items})
 random.shuffle(item_subjects)
 item_templates = ["{n}多少钱", "{n}的属性是什么", "{n}适合什么英雄出", "{n}的被动是什么"]
 for i, name in enumerate(item_subjects[:20]):
     q = random.choice(item_templates).format(n=name)
-    gt = " ".join(d["text"] for d in by_subject[name])[:300]
-    entries.append(make_entry(i, "item", q, "装备", name, gt))
+    gold = [find_item_doc(name)]
+    entries.append(
+        make_entry(
+            i,
+            "item",
+            q,
+            "装备",
+            name,
+            BY_ID[gold[0]]["text"],
+            gold,
+            hard_negatives(gold[0], name, "装备"),
+        )
+    )
 
-# ---- 背景/英雄类 15 条 ----
+# ---- lore: 15 ----
 hero_subjects = sorted(all_heroes)
 random.shuffle(hero_subjects)
 lore_templates = ["{h}的背景故事是什么", "{h}是什么定位的英雄", "讲讲{h}这个角色"]
 for i, hero in enumerate(hero_subjects[:15]):
     q = random.choice(lore_templates).format(h=hero)
-    gt = " ".join(d["text"] for d in by_subject[hero])[:300]
-    entries.append(make_entry(i, "lore", q, "背景", hero, gt))
+    gold = [find_basic_doc(hero)]
+    entries.append(
+        make_entry(
+            i,
+            "lore",
+            q,
+            "背景",
+            hero,
+            BY_ID[gold[0]]["text"],
+            gold,
+            hard_negatives(gold[0], hero, "背景"),
+        )
+    )
 
-# ---- 黑话类 15 条 ----
+# ---- slang: 15 (in-vocabulary only; see docs/evaluation.md) ----
 slang_templates = ["{s}是什么", "{s}多少钱", "{s}有什么用"]
 cnt = 0
 for slang, official in synonyms.items():
     if cnt >= 15:
         break
-    if official not in by_subject:
+    if official not in {d["subject"] for d in items}:
         continue
     q = random.choice(slang_templates).format(s=slang)
-    gt = " ".join(d["text"] for d in by_subject[official])[:300]
-    entries.append(make_entry(cnt, "slang", q, "黑话", official, gt))
+    gold = [find_item_doc(official)]
+    entries.append(
+        make_entry(
+            cnt,
+            "slang",
+            q,
+            "黑话",
+            official,
+            BY_ID[gold[0]]["text"],
+            gold,
+            hard_negatives(gold[0], official, "黑话"),
+            in_vocab_slang=True,
+        )
+    )
     cnt += 1
 
-out = Path("eval/dataset_80.skeleton.jsonl")
-with out.open("w", encoding="utf-8") as f:
-    for e in entries:
-        f.write(json.dumps(e, ensure_ascii=False) + "\n")
-
-print(f"\n共生成 {len(entries)} 条 -> {out}")
+OUT.write_text(
+    "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n",
+    encoding="utf-8",
+)
+print(f"\n共生成 {len(entries)} 条 -> {OUT}")
 print("类型分布:", Counter(e["type"] for e in entries))
+print("gold 长度分布:", Counter(len(e["gold_doc_ids"]) for e in entries))

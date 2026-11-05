@@ -12,6 +12,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BASE_DIR = Path(__file__).resolve().parent
 
 
+class RetrievalConfigError(RuntimeError):
+    """Raised when an explicitly selected retriever is misconfigured."""
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
@@ -39,6 +43,9 @@ class Settings(BaseSettings):
     distance_threshold: float = 0.6
     index_version: str = "v1"
     prompt_version: str = "v2"
+    rerank_backend: str = "bge"
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_timeout: float = 30.0
 
     # API / MCP
     mcp_transport: str = "sse"

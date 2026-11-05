@@ -53,6 +53,10 @@ def build(collections: list[str], index_version: str) -> None:
                 metadatas=[
                     {
                         "doc_id": c.get("doc_id", ""),
+                        "doc_ids": ",".join(
+                            c.get("doc_ids")
+                            or ([c["doc_id"]] if c.get("doc_id") else [])
+                        ),
                         "subject": c.get("subject", ""),
                         "type": c.get("type", ""),
                         "version": c.get("version", ""),

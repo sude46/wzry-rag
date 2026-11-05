@@ -11,32 +11,48 @@ _stub.ChatVertexAI = type("ChatVertexAI", (), {})
 sys.modules["langchain_community.chat_models.vertexai"] = _stub
 
 import json
-import os
-from ragas import RunConfig
+from pathlib import Path
+
 from datasets import Dataset
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from ragas import evaluate
+from ragas import RunConfig, evaluate
 from ragas.embeddings import LangchainEmbeddingsWrapper
 from ragas.llms import LangchainLLMWrapper
-from ragas.metrics import (AnswerRelevancy, Faithfulness,
-                           LLMContextPrecisionWithReference, LLMContextRecall)
+from ragas.metrics import (
+    AnswerRelevancy,
+    Faithfulness,
+    LLMContextPrecisionWithReference,
+    LLMContextRecall,
+)
 
-BASE = os.environ.get("EMBED_BASE_URL", "https://api.siliconflow.cn/v1")
-KEY = os.environ["EMBED_API_KEY"]
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from config import get_settings  # noqa: E402
+
+settings = get_settings()
+BASE = settings.embed_base_url
+KEY = settings.resolved_llm_api_key
+if not KEY:
+    raise RuntimeError("RAGAS 需要 EMBED_API_KEY / LLM_API_KEY")
 
 judge = LangchainLLMWrapper(ChatOpenAI(
     base_url=BASE, api_key=KEY,
-    model=os.environ.get("GEN_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
+    model=settings.gen_model,
     temperature=0, max_retries=5))
 emb = LangchainEmbeddingsWrapper(OpenAIEmbeddings(
     base_url=BASE, api_key=KEY,
-    model=os.environ.get("EMBED_MODEL", "BAAI/bge-m3")))
+    model=settings.embed_model))
 
-import sys
-IN = sys.argv[1] if len(sys.argv) > 1 else "eval/baseline_results.jsonl"
-OUT = IN.replace("eval/results_", "reports/ragas_").replace(".jsonl", ".csv")
+if len(sys.argv) > 1:
+    IN = Path(sys.argv[1])
+else:
+    candidates = sorted(Path("eval/results").glob("*.jsonl"))
+    if not candidates:
+        raise RuntimeError("No eval/results/*.jsonl found. Run `make eval-gen` first.")
+    IN = candidates[-1]
+OUT = Path("reports") / (IN.stem.replace("results_", "ragas_") + ".csv")
+OUT.parent.mkdir(parents=True, exist_ok=True)
 rows = [json.loads(l) for l in open(IN, encoding="utf-8")]
-rows = [r for r in rows if r.get("category") != "拒答"]  # 拒答题不进RAGAS
+rows = [r for r in rows if r.get("category", r.get("type")) != "拒答"]  # 拒答题不进RAGAS
 print(f"输入: {IN} ({len(rows)}条)")
 ds = Dataset.from_list([{
     "user_input": r["question"],

@@ -24,10 +24,12 @@ def make_chunk(
     type_: str = "",
     version: str = "",
     source_url: str = "",
+    doc_ids: list[str] | None = None,
 ) -> dict:
     return {
         "chunk_id": cid,
         "doc_id": doc_id,
+        "doc_ids": doc_ids or ([doc_id] if doc_id else []),
         "strategy": strategy,
         "text": text,
         "subject": subject,
@@ -42,15 +44,34 @@ CHARS_PER_TOKEN = 1.5
 CHUNK = int(512 * CHARS_PER_TOKEN)
 OVERLAP = int(50 * CHARS_PER_TOKEN)
 
-river = "\n".join(d["text"] for d in docs)
+parts: list[str] = []
+spans: list[tuple[int, int, str]] = []
+pos = 0
+for d in docs:
+    if parts:
+        parts.append("\n")
+        pos += 1
+    start = pos
+    parts.append(d["text"])
+    pos += len(d["text"])
+    spans.append((start, pos, d["doc_id"]))
+river = "".join(parts)
+
 fixed = []
 i, n = 0, 0
 while i < len(river):
+    chunk = river[i : i + CHUNK]
+    end = i + len(chunk)
+    doc_ids: list[str] = []
+    for start, stop, doc_id in spans:
+        if start < end and stop > i and doc_id not in doc_ids:
+            doc_ids.append(doc_id)
     fixed.append(
         make_chunk(
             f"fixed_{n:04d}",
             "fixed",
-            river[i : i + CHUNK],
+            chunk,
+            doc_ids=doc_ids,
             version=DEFAULT_VERSION,
         )
     )
@@ -71,6 +92,7 @@ for (subject, type_), ds in groups.items():
             "heading",
             text,
             doc_id=ds[0].get("doc_id", ""),
+            doc_ids=[x["doc_id"] for x in ds],
             subject=subject,
             type_=type_,
             version=ds[0].get("version") or DEFAULT_VERSION,
@@ -85,6 +107,7 @@ semantic = [
         "semantic",
         d["text"],
         doc_id=d.get("doc_id", ""),
+        doc_ids=[d["doc_id"]],
         subject=d["subject"],
         type_=d["type"],
         version=d.get("version") or DEFAULT_VERSION,

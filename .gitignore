@@ -15,6 +15,8 @@ analysis.md
 reports/
 eval/results_*.jsonl
 eval/*results*.jsonl
+eval/results/
+eval/dataset_80.skeleton.jsonl
 
 # Secrets
 .env

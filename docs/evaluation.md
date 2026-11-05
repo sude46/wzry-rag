@@ -1,8 +1,8 @@
 # Evaluation
 
-## Dataset
+## Dataset v2
 
-`eval/dataset_80.jsonl` contains 80 manually reviewed questions:
+`eval/dataset_80_v2.jsonl` contains 80 questions:
 
 | Category | Count |
 |---|---:|
@@ -12,41 +12,73 @@
 | Lore (背景/定位) | 12 |
 | Refusal (知识库未收录) | 8 |
 
-72 questions have answers; 8 are refusal cases. Slang questions use `eval/synonyms.json` to map player terms (e.g. 帽子 → 博学者之怒) to official names.
+72 questions are answerable; 8 expect refusal. Each answerable question has **one or more question-specific gold doc ids**, not the whole hero's document set:
+
+```json
+{
+  "id": "mech_000",
+  "question": "橘右京的被动是什么",
+  "type": "机制",
+  "subject": "橘右京",
+  "gold_doc_ids": ["hero_163_skill_0"],
+  "hard_negative_doc_ids": ["hero_163_skill_1", "hero_163_skill_2", "hero_163_skill_3"],
+  "expect_refusal": false,
+  "skill_label": "被动"
+}
+```
+
+Gold construction:
+
+- Mechanics: the skill document matching the requested label (`被动/一技能/二技能/三技能/四技能/大招`).
+- Items / slang: the item document.
+- Lore: the hero's `*_basic` document.
+- Refusal: empty gold; scored separately.
+
+`hard_negative_doc_ids` are same-hero other skills (mechanics), other heroes (lore), or other items (items/slang). They power the `wrong_negative` metric: a same-hero but wrong-skill result is counted when no gold doc is retrieved.
+
+`eval/rebuild_gold.py` rebuilds v2 from the frozen questions. `eval/build_dataset.py` now generates question-specific gold ids and hard negatives instead of attaching `by_subject[subject][:10]`.
 
 ## Metrics
 
-Retrieval is evaluated with Hit@5, Recall@5 and MRR. For a question with subject `S`, a retrieved chunk counts as a hit when its metadata subject matches `S` (or a known alias). Refusal questions are excluded from retrieval metrics and scored separately as refused / not refused.
+- **Doc Hit@k**: at least one gold doc id appears in the top k retrieved docs.
+- **Doc Recall@k**: `|retrieved top-k ∩ gold| / |gold|`; for the usual one-gold case this equals Hit@k.
+- **MRR**: reciprocal rank of the first gold doc.
+- **wrong_negative**: no gold doc retrieved, but a hard-negative doc was; this is the "retrieved the hero but the wrong skill" signal.
+- **Refusal**: evaluated separately as refused / not refused; refusal rows are excluded from retrieval means.
 
-Generation is evaluated with RAGAS (Faithfulness, Answer Relevancy, LLM Context Precision/Recall). The judge is an LLM; this introduces self-preference bias, so the numbers should be read as relative signals, not absolute quality.
+The old `Recall@5` implementation divided by `K` and counted same-subject chunks. That was **hit density**, not recall. It is removed from the headline.
 
-## Main result
+## Results
 
-Semantic chunks, K=5, Qwen2.5-7B-Instruct:
+Doc-level metrics, semantic chunks, K=5. The numbers below are an offline replay of the last retrieval run against the v2 gold; `make eval` regenerates them when the embedding API is available.
 
-| Retriever | Hit@5 | Recall@5 | MRR |
-|---|---:|---:|---:|
-| Vector | 0.861 | 0.475 | 0.847 |
-| Hybrid (BM25 + Vector + RRF) | **0.986** | **0.567** | **0.910** |
-| Hybrid + bge-reranker-v2-m3 | 0.917 | 0.486 | 0.894 |
+| Retriever | Hit@1 | Hit@3 | Hit@5 | Recall@5 | MRR | wrong_negative |
+|---|---:|---:|---:|---:|---:|---:|
+| Vector | 0.778 | 0.847 | 0.861 | 0.861 | 0.816 | 0.000 |
+| **Hybrid (BM25 + Vector + RRF)** | **0.806** | **0.972** | **0.986** | **0.986** | **0.878** | **0.000** |
+| Hybrid + bge-reranker-v2-m3 | 0.861 | 0.917 | 0.917 | 0.917 | 0.887 | 0.000 |
 
-The hybrid row is the latest retrieval-only run after case-insensitive slang expansion. Generation is excluded (`GEN=0`) so the number measures retrieval, not the LLM.
+### What changed from the old subject-level result
 
-## Ablation
+| Metric | Old subject-level | Doc-level v2 |
+|---|---:|---:|
+| Hit@5 | 0.986 | 0.986 |
+| Hit@1 | — | 0.806 |
+| MRR | 0.910 | 0.878 |
+| "Recall@5" | 0.567 (invalid) | 0.986 |
 
-A 3×3 matrix compared fixed-length, heading and semantic chunks against vector, BM25 and hybrid retrieval. The selected production combination is **semantic chunks + hybrid retrieval** because it has the best Recall@5 and complete citation metadata. Fixed-length chunks can score higher on a loose "text contains subject" criterion but cannot provide reliable citations.
+Hit@5 did **not** drop much because the correct skill was already in the top 5 for most questions. The leakage shows up in **Hit@1 and MRR**: the first result is often the hero's basic/equipment chunk, not the requested skill. This is a more useful finding than a fake Hit@5 drop.
 
-## Why reranking was rejected
+### Interpretation
 
-Reranking was tested three times. It did not beat hybrid retrieval, and the black-slang Hit dropped from 1.00 to 0.87. The diagnosis: query expansion concatenated slang and official names into one string, which polluted the cross-encoder input. A future experiment should rerank with the original query and deduplicated candidates.
+- Hybrid retrieval is still the best overall: Hit@5 0.986 vs 0.861 vector.
+- Rerank has a higher Hit@1 (0.861 vs 0.806) but a lower Hit@5 (0.917 vs 0.986); it is not adopted for the production Top5. This is a real trade-off, not a blanket "rerank is bad".
+- Wrong-negative is 0.000 at K=5 for all three; the remaining errors are misses, not same-hero wrong-skill answers.
+- Fixed/heading chunks now carry `doc_ids` (fixed via source spans, heading via group membership), so retrieval results can be mapped back to documents. Citation quality still favors semantic chunks because each chunk has a single primary `doc_id`.
 
-## Known validity issues
+## Slang caveat
 
-- Hit@5 uses subject-level matching; a chunk about the same hero but the wrong skill can still count as a hit.
-- `relevant_doc_ids` in the dataset is a subject-level candidate list, not a strict per-question gold set.
-- The RAGAS judge is the same 7B model family as the generator.
-- The set is small (72 answerable questions); report confidence intervals when comparing models.
-- Per-question outputs and bad-case notes are kept local and are not published.
+The 15 slang questions are **in-vocabulary**: they are generated from the same `eval/synonyms.json` used by query expansion. The 1.00 slang Hit@5 means "the dictionary expansion works", not "the system generalizes to unseen slang". A held-out slang set is future work; do not claim generalization from this number.
 
 ## Reproduce
 
@@ -54,7 +86,15 @@ Reranking was tested three times. It did not beat hybrid retrieval, and the blac
 cp .env.example .env   # set EMBED_API_KEY
 make chunks
 make index
-RETRIEVER=hybrid uv run python eval/run_eval.py
+make eval              # GEN=0, dataset_80_v2, hybrid
 ```
 
-The script writes per-question JSONL results under `eval/` (gitignored). Aggregate numbers above can be regenerated from those files.
+Per-question results go to `eval/results/` (gitignored) with a sidecar `.meta.json` containing `git_sha`, `index_version`, `prompt_version`, model, K and dataset hash. Only aggregate numbers belong in README/docs; raw results stay local.
+
+## Known validity issues
+
+- 72 answerable questions is small; report confidence intervals when comparing models.
+- RAGAS uses an LLM judge; keep it as a relative signal, not an absolute score.
+- Slang is in-vocabulary, not held out.
+- The 2016 snapshot is not current-game data.
+- Fixed/heading chunk mapping is approximate for chunks spanning multiple docs; semantic chunks remain the citation-grade strategy.

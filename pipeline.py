@@ -6,6 +6,7 @@ retrieval, refusal and citation behaviour stay in sync.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 import uuid
@@ -14,7 +15,7 @@ from typing import Iterator
 
 from openai import OpenAI
 
-from config import BASE_DIR, Settings, get_settings
+from config import BASE_DIR, RetrievalConfigError, Settings, get_settings
 from contracts import AnswerResult, Citation, RetrievedChunk
 from memory import redis_store
 from retrieval.rag_pipeline import generate as _generate_once
@@ -23,6 +24,7 @@ from retrieval.rag_pipeline import retrieve as _vector_retrieve
 REFUSAL = "知识库中没有找到相关内容"
 REFUSAL_MARKERS = ("没有找到相关内容", "未收录", "没有收录", "无法回答", "资料中没有", "无法确定")
 CITATION_RE = re.compile(r"\[(\d+)\]")
+logger = logging.getLogger(__name__)
 
 
 class RagPipeline:
@@ -143,9 +145,12 @@ class RagPipeline:
         k: int | None = None,
         type: str | None = None,
         version: str | None = None,
+        trace: dict | None = None,
     ) -> list[RetrievedChunk]:
         k = k or self.settings.top_k
         mode = self.settings.retriever
+        if trace is not None:
+            trace["retrieval_mode"] = mode
         try:
             if mode == "hybrid":
                 from retrieval.hybrid import retrieve_hybrid
@@ -166,9 +171,24 @@ class RagPipeline:
                     k=max(k, 5),
                     version=version,
                 )
-        except Exception:
+        except RetrievalConfigError:
+            # A missing key/config is not a transient failure. Do not hide it.
+            raise
+        except Exception as exc:
+            logger.warning(
+                "retriever=%s failed; falling back to vector: %s: %s",
+                mode,
+                exc.__class__.__name__,
+                exc,
+            )
+            if trace is not None:
+                trace["retrieval_mode"] = "vector_fallback"
+                trace["retrieval_fallback"] = f"{exc.__class__.__name__}: {exc}"
             raw = _vector_retrieve(
-                query, collection=self.settings.collection, k=max(k, 5), version=version
+                query,
+                collection=self.settings.collection,
+                k=max(k, 5),
+                version=version,
             )
 
         chunks = [RetrievedChunk.from_raw(item) for item in raw]
@@ -305,7 +325,8 @@ class RagPipeline:
             return result
 
         t2 = time.perf_counter()
-        chunks = self.search(standalone, version=version)
+        search_trace: dict = {}
+        chunks = self.search(standalone, version=version, trace=search_trace)
         retrieve_ms = (time.perf_counter() - t2) * 1000
 
         if not chunks or self._gate(chunks):
@@ -318,6 +339,7 @@ class RagPipeline:
                     "rewrite_ms": round(rewrite_ms, 1),
                     "retrieve_ms": round(retrieve_ms, 1),
                     "total_ms": round((time.perf_counter() - t0) * 1000, 1),
+                    **search_trace,
                 },
             )
             redis_store.append_turn(session_id, question, result.answer)
@@ -364,6 +386,7 @@ class RagPipeline:
                 "chunks": [c.doc_id for c in used],
                 "prompt_version": self.settings.prompt_version,
                 "index_version": self.settings.index_version,
+                **search_trace,
             },
         )
 
@@ -406,7 +429,8 @@ class RagPipeline:
                 return
 
             t2 = time.perf_counter()
-            chunks = self.search(standalone, version=version)
+            search_trace: dict = {}
+            chunks = self.search(standalone, version=version, trace=search_trace)
             retrieve_ms = (time.perf_counter() - t2) * 1000
             if not chunks or self._gate(chunks):
                 yield "token", {"text": REFUSAL}
@@ -420,6 +444,7 @@ class RagPipeline:
                         "standalone": standalone,
                         "retrieve_ms": round(retrieve_ms, 1),
                         "total_ms": round((time.perf_counter() - t0) * 1000, 1),
+                        **search_trace,
                     },
                 }
                 return
@@ -472,6 +497,7 @@ class RagPipeline:
                     "chunks": [c.doc_id for c in used],
                     "prompt_version": self.settings.prompt_version,
                     "index_version": self.settings.index_version,
+                    **search_trace,
                 },
             }
         except Exception as exc:  # keep the SSE stream alive with a typed error event

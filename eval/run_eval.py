@@ -1,44 +1,78 @@
+"""Doc-level retrieval evaluation.
+
+Default: eval/dataset_80_v2.jsonl, hybrid retrieval, retrieval only (GEN=0).
+Usage:
+    uv run python eval/run_eval.py [dataset]
+    GEN=1 uv run python eval/run_eval.py eval/dataset_80_v2.jsonl
+    RETRIEVER=vector|hybrid|bm25|rerank ...
 """
-Day5+: 跑评估集, 计算检索指标 Hit@5/Recall@5/MRR(subject匹配代理)
-用法: uv run python eval/run_eval.py [数据集路径, 默认eval/dataset_seed.jsonl]
-环境变量 RETRIEVER: 空=纯向量 / hybrid=混合 / rerank=混合+重排
-拒答题(type==拒答)不计入检索指标, 单独统计拒答正确率
-"""
+from __future__ import annotations
+
+import hashlib
 import json
-import sys
 import os
+import subprocess
+import sys
+import time
 from collections import defaultdict
 from pathlib import Path
-sys.path.insert(0, ".")
-from retrieval.rag_pipeline import retrieve, generate
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from eval.metrics import mean_metric, ranking_metrics  # noqa: E402
+from retrieval.rag_pipeline import generate, retrieve  # noqa: E402
 
 RETRIEVER = os.environ.get("RETRIEVER", "hybrid")
 if RETRIEVER == "hybrid":
-    from retrieval.hybrid import retrieve_hybrid as retrieve
+    from retrieval.hybrid import retrieve_hybrid as retrieve  # noqa: F811
 elif RETRIEVER == "rerank":
-    from retrieval.rerank import retrieve_rerank as retrieve
-
-SYNONYMS = json.load(open("eval/synonyms.json", encoding="utf-8"))
-ALIAS = {}
-for slang, official in SYNONYMS.items():
-    group = {slang, official}
-    for name in group:
-        ALIAS.setdefault(name, set()).update(group)
-
-K = 5
-COLLECTION = os.environ.get("COLLECTION", "semantic")
-if RETRIEVER == "bm25":
+    from retrieval.rerank import retrieve_rerank as retrieve  # noqa: F811
+elif RETRIEVER == "bm25":
     from retrieval.bm25 import bm25_search
-    def retrieve(q, k=K, **_):
-        return [{"text": r["text"], "metadata": r["metadata"]} for r in bm25_search(q, k=k)]
-else:
-    _base_retrieve = retrieve
-    def retrieve(q, k=K, **_):
-        return _base_retrieve(q, collection=COLLECTION, k=k)
 
-DATASET = sys.argv[1] if len(sys.argv) > 1 else "eval/dataset_seed.jsonl"
-rows = [json.loads(l) for l in open(DATASET, encoding="utf-8")]
-print(f"数据集: {DATASET} ({len(rows)}条)  分块: {COLLECTION}  检索器: {RETRIEVER}")
+    def retrieve(q, k=5, **_):
+        return [
+            {"text": r["text"], "metadata": r["metadata"]}
+            for r in bm25_search(q, k=k)
+        ]
+
+K = int(os.environ.get("K", "5"))
+COLLECTION = os.environ.get("COLLECTION", "semantic")
+DATASET = sys.argv[1] if len(sys.argv) > 1 else "eval/dataset_80_v2.jsonl"
+GEN = os.environ.get("GEN", "0") != "0"
+
+# Map returned chunk text back to all source docs. This is needed for fixed
+# chunks and for older indexes that only stored one doc_id.
+TEXT_TO_DOCS: dict[str, list[str]] = {}
+chunks_path = Path("data/chunks") / f"chunks_{COLLECTION}.jsonl"
+if chunks_path.exists():
+    for line in chunks_path.read_text(encoding="utf-8").splitlines():
+        c = json.loads(line)
+        ids = c.get("doc_ids") or ([c["doc_id"]] if c.get("doc_id") else [])
+        TEXT_TO_DOCS[c["text"]] = ids
+
+
+def _retrieve(q: str) -> list[dict]:
+    if RETRIEVER in {"hybrid", "rerank", "vector"}:
+        return retrieve(q, collection=COLLECTION, k=K)
+    return retrieve(q, k=K)
+
+
+def _doc_ids(item: dict) -> list[str]:
+    meta = item.get("metadata") or {}
+    raw = meta.get("doc_ids") or ""
+    if isinstance(raw, list):
+        ids = [str(x) for x in raw if x]
+    else:
+        ids = [x for x in str(raw).split(",") if x]
+    if not ids and meta.get("doc_id"):
+        ids = [str(meta["doc_id"])]
+    mapped = TEXT_TO_DOCS.get(item.get("text", ""), [])
+    # Heading chunks can cover several docs; prefer the full chunk mapping.
+    if mapped and len(mapped) > len(ids):
+        ids = mapped
+    return ids
+
 
 REFUSE_WORDS = [
     "未收录",
@@ -49,72 +83,123 @@ REFUSE_WORDS = [
     "无法确定",
 ]
 
-from concurrent.futures import ThreadPoolExecutor
-GEN = os.environ.get("GEN", "1") != "0"
 
-def run_one(row):
+def run_one(row: dict) -> tuple[str, dict]:
     q = row["question"]
-    ctxs = retrieve(q, k=K)
+    ctxs = _retrieve(q)
     ans = generate(q, ctxs) if GEN else ""
-    rtype = row.get("category", row.get("type"))
-    rec = {"id": row.get("id"), "question": q, "answer": ans,
-           "ground_truth": row["ground_truth"], "category": rtype,
-           "subject": row.get("subject"),
-           "contexts": [c["text"] for c in ctxs]}
-    if rtype == "\u62d2\u7b54":
-        rec["refused"] = any(w in ans for w in REFUSE_WORDS)
+    retrieved_ids: list[str] = []
+    for item in ctxs:
+        for doc_id in _doc_ids(item):
+            if doc_id and doc_id not in retrieved_ids:
+                retrieved_ids.append(doc_id)
+
+    rec = {
+        "id": row.get("id"),
+        "question": q,
+        "type": row.get("type", row.get("category")),
+        "subject": row.get("subject"),
+        "answer": ans,
+        "ground_truth": row.get("ground_truth", ""),
+        "retrieved_doc_ids": retrieved_ids,
+        "retrieved_subjects": [c.get("metadata", {}).get("subject", "") for c in ctxs],
+        "contexts": [c["text"] for c in ctxs],
+    }
+
+    expect_refusal = bool(row.get("expect_refusal", row.get("type") == "拒答"))
+    if expect_refusal:
+        rec["refused"] = any(word in ans for word in REFUSE_WORDS)
         return "refuse", rec
-    targets = ALIAS.get(row["subject"], {row["subject"]})
-    hits = [(c["metadata"].get("subject") in targets if c["metadata"].get("subject")
-                else any(t in c["text"] for t in targets)) for c in ctxs]
-    rec["hit"] = any(hits)
-    rec["recall5"] = sum(hits) / K
-    rec["mrr"] = next((1.0 / (i + 1) for i, h in enumerate(hits) if h), 0.0)
+
+    gold = row.get("gold_doc_ids")
+    if gold is None:
+        # Backward compatibility for the old broad dataset.
+        gold = row.get("relevant_doc_ids", [])
+        print(f"[legacy] {row.get('id')} uses broad relevant_doc_ids")
+    hard = row.get("hard_negative_doc_ids", [])
+    rec.update(ranking_metrics(retrieved_ids, gold, hard, K))
     return "normal", rec
 
-import time
 
-def run_one_safe(row):
-    """限流/抖动自动重试3次, 每次等20秒"""
+def run_one_safe(row: dict) -> tuple[str, dict]:
     for attempt in range(3):
         try:
             return run_one(row)
-        except Exception as e:
-            print(f"[重试{attempt+1}/3] {row.get('question','')[:20]}: {type(e).__name__}")
-            time.sleep(20)
+        except Exception as exc:
+            # Config errors should not be retried for a minute.
+            if type(exc).__name__ in {"RetrievalConfigError", "RuntimeError"}:
+                raise
+            print(f"[retry {attempt + 1}/3] {row.get('question', '')[:24]}: {type(exc).__name__}")
+            time.sleep(5)
     raise
 
-results = []
-refuse_results = []
-with ThreadPoolExecutor(max_workers=int(os.environ.get("WORKERS","4"))) as pool:
-    for i, (kind, rec) in enumerate(pool.map(run_one_safe, rows), 1):
-        (refuse_results if kind == "refuse" else results).append(rec)
-        print(f"[{i:2d}/{len(rows)}] {rec['question'][:30]}")
 
-n = len(results)
-print(f"\n===== {Path(DATASET).stem} | {RETRIEVER} | K={K} | 有答案题{n}条 =====")
-print(f"Hit@5   = {sum(r['hit'] for r in results) / n:.3f}")
-print(f"Recall@5= {sum(r['recall5'] for r in results) / n:.3f}")
-print(f"MRR     = {sum(r['mrr'] for r in results) / n:.3f}")
+def main() -> None:
+    rows = [json.loads(line) for line in Path(DATASET).read_text(encoding="utf-8").splitlines()]
+    print(f"dataset={DATASET} rows={len(rows)} retriever={RETRIEVER} collection={COLLECTION} K={K} gen={GEN}")
 
-print("\n分类别:")
-agg = defaultdict(list)
-for r in results:
-    agg[r["category"]].append(r)
-for cat, rs in sorted(agg.items()):
-    h = sum(x["hit"] for x in rs) / len(rs)
-    m = sum(x["mrr"] for x in rs) / len(rs)
-    print(f"  {cat}: Hit={h:.2f} MRR={m:.2f} ({len(rs)}条)")
+    results: list[dict] = []
+    refusals: list[dict] = []
+    for i, row in enumerate(rows, 1):
+        kind, rec = run_one_safe(row)
+        (refusals if kind == "refuse" else results).append(rec)
+        print(f"[{i:2d}/{len(rows)}] {rec['question'][:34]}")
 
-if refuse_results and GEN:
-    ok = sum(r["refused"] for r in refuse_results)
-    print(f"\n拒答正确率 = {ok}/{len(refuse_results)}")
-    for r in refuse_results:
-        if not r["refused"]:
-            print(f"  该拒未拒: {r['question']} -> {r['answer'][:50]}")
+    n = len(results)
+    print(f"\n===== {Path(DATASET).stem} | {RETRIEVER} | K={K} | answerable={n} =====")
+    for name in ("hit@1", "hit@3", "hit@5", "recall@5", "mrr", "wrong_negative"):
+        print(f"{name:16s}= {mean_metric(results, name):.3f}")
 
-out = f"eval/results_{Path(DATASET).stem}_{COLLECTION}_{RETRIEVER}.jsonl"
-with open(out, "w", encoding="utf-8") as f:
-    for r in results + refuse_results:
-        f.write(json.dumps(r, ensure_ascii=False) + "\n")
-print(f"\n明细已存 {out}")
+    print("\nby category:")
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for rec in results:
+        grouped[rec["type"]].append(rec)
+    for category, recs in sorted(grouped.items()):
+        print(
+            f"  {category}: n={len(recs)} "
+            f"Hit@1={mean_metric(recs, 'hit@1'):.2f} "
+            f"Hit@5={mean_metric(recs, 'hit@5'):.2f} "
+            f"MRR={mean_metric(recs, 'mrr'):.2f} "
+            f"wrong={mean_metric(recs, 'wrong_negative'):.2f}"
+        )
+
+    if refusals and GEN:
+        ok = sum(r["refused"] for r in refusals)
+        print(f"\nrefusal correct = {ok}/{len(refusals)}")
+
+    try:
+        git_sha = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except Exception:
+        git_sha = "unknown"
+    meta = {
+        "dataset": str(DATASET),
+        "dataset_sha256": hashlib.sha256(Path(DATASET).read_bytes()).hexdigest(),
+        "git_sha": git_sha,
+        "retriever": RETRIEVER,
+        "collection": COLLECTION,
+        "k": K,
+        "gen": GEN,
+        "index_version": os.environ.get("INDEX_VERSION", "v1"),
+        "prompt_version": os.environ.get("PROMPT_VERSION", "v2"),
+        "model": os.environ.get("GEN_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+
+    out_dir = Path("eval/results")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    out = out_dir / f"{Path(DATASET).stem}_{RETRIEVER}_{COLLECTION}_{stamp}.jsonl"
+    with out.open("w", encoding="utf-8") as f:
+        for rec in results + refusals:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    out.with_suffix(".meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"\nwrote {out}")
+    print(f"wrote {out.with_suffix('.meta.json')}")
+
+
+if __name__ == "__main__":
+    main()

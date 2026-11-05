@@ -44,21 +44,22 @@ The important design choice: **API, CLI, MCP and evaluation go through one `pipe
 
 ## Results
 
-Dataset: 80 questions (25 mechanics / 20 items / 15 slang / 12 lore / 8 refusal), 72 answerable questions. Chunking: semantic per-document. K=5. Generation: Qwen2.5-7B-Instruct. Full per-question outputs are kept out of the repository.
+Dataset v2: 80 questions (25 mechanics / 20 items / 15 slang / 12 lore / 8 refusal), 72 answerable. Each answerable question has a **question-specific gold doc id**, not the whole hero's document set. Chunking: semantic per-document. K=5. Generation: Qwen2.5-7B-Instruct. Full per-question outputs are kept out of the repository.
 
-| Retriever | Hit@5 | Recall@5 | MRR |
-|---|---:|---:|---:|
-| Vector baseline | 0.861 | 0.475 | 0.847 |
-| **Hybrid (BM25 + Vector + RRF)** | **0.986** | **0.567** | **0.910** |
-| Hybrid + bge reranker | 0.917 | 0.486 | 0.894 |
+| Retriever (doc-level) | Hit@1 | Hit@3 | Hit@5 | Recall@5 | MRR |
+|---|---:|---:|---:|---:|---:|
+| Vector baseline | 0.778 | 0.847 | 0.861 | 0.861 | 0.816 |
+| **Hybrid (BM25 + Vector + RRF)** | **0.806** | **0.972** | **0.986** | **0.986** | **0.878** |
+| Hybrid + bge reranker | 0.861 | 0.917 | 0.917 | 0.917 | 0.887 |
 
 Key findings:
 
-- Slang retrieval improved from **0.60 → 1.00** Hit@5 with hybrid retrieval; the latest run also gains from case-insensitive slang expansion (0.986 overall).
-- Reranking was rejected after three independent runs. The likely cause: query expansion text polluted the cross-encoder input. The negative result is kept, not hidden.
-- Mechanics/lore questions were already strong on vector search; the hard cases were slang and item names.
+- The old subject-level Hit@5 was 0.986; the doc-level v2 Hit@5 is still 0.986, but **Hit@1 drops to 0.806** and MRR to 0.878. The leakage was in "retrieved this hero" vs "retrieved the requested skill", not in Top5 coverage.
+- The old "Recall@5 = 0.567" was hit density (same-subject chunks / K), not recall. The corrected one-gold Recall@5 is 0.986.
+- Reranking was rejected for the production Top5 after three runs: it improves Hit@1 (0.861) but loses Hit@5 (0.917 vs 0.986). The root cause is documented; the negative result is kept.
+- Slang is **in-vocabulary** (same dictionary used for expansion); 1.00 means the dictionary path works, not that it generalizes to unseen slang.
 
-> Metric caveat: Hit@5 is a subject-level proxy, not a strict document-level gold metric. See [`docs/evaluation.md`](docs/evaluation.md) for methodology and limitations.
+> Methodology, hard negatives, and validity caveats: [`docs/evaluation.md`](docs/evaluation.md).
 
 ---
 
@@ -171,7 +172,7 @@ docs/                    # design / evaluation / MCP notes
 ## Limitations
 
 - Data is a **2016 snapshot**; many current heroes/items are missing. The project is a retrieval/engineering demo, not a current-game encyclopedia.
-- Evaluation is 80 questions and uses a subject-level Hit proxy; confidence intervals and human calibration are future work.
+- Evaluation is 80 questions and uses question-specific gold docs; confidence intervals and human calibration are future work.
 - Generation uses a 7B API model. Failure modes such as occasional over-refusal and false-premise handling are documented in the bad-case notes.
 - No production traffic, auth, or rate limiting. The demo is not hardened for public multi-tenant use.
 - Raw evaluation outputs and per-question analysis are kept local; the repository publishes aggregate results only.

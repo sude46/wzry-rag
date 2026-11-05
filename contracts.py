@@ -8,6 +8,7 @@ from typing import Any
 @dataclass
 class RetrievedChunk:
     doc_id: str = ""
+    doc_ids: list[str] = field(default_factory=list)
     text: str = ""
     subject: str = ""
     type: str = ""
@@ -23,8 +24,16 @@ class RetrievedChunk:
         meta = raw.get("metadata") or {}
         if not isinstance(meta, dict):
             meta = {}
+        raw_ids = meta.get("doc_ids") or ""
+        if isinstance(raw_ids, list):
+            doc_ids = [str(x) for x in raw_ids if x]
+        else:
+            doc_ids = [x for x in str(raw_ids).split(",") if x]
+        if not doc_ids and meta.get("doc_id"):
+            doc_ids = [str(meta["doc_id"])]
         return cls(
             doc_id=str(meta.get("doc_id") or raw.get("doc_id") or ""),
+            doc_ids=doc_ids,
             text=str(raw.get("text") or raw.get("document") or ""),
             subject=str(meta.get("subject") or ""),
             type=str(meta.get("type") or ""),
