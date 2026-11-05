@@ -41,7 +41,7 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-name/wzry-rag"
+Homepage = "https://github.com/sude46/wzry-rag"
 
 [tool.setuptools.packages.find]
 include = ["agent*", "api*", "retrieval*", "memory*", "mcp_server*", "ingest*", "eval*", "tools*"]

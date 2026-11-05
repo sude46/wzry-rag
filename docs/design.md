@@ -2,7 +2,7 @@
 
 ## 1. One pipeline, four entrypoints
 
-The project exposes the same logic through four surfaces: FastAPI/SSE, CLI, MCP and evaluation. They all call `pipeline.RagPipeline`. This was a deliberate cleanup: earlier versions had separate orchestration in `api/service.py`, `agent/generate.py`, `eval/run_eval.py` and `mcp_server/tools.py`, which made the evaluation prompt drift from production.
+FastAPI/SSE, CLI and MCP call `pipeline.RagPipeline`. Evaluation is a separate retrieval-only harness: it reuses the same retriever and answer prompt, but skips streaming, session memory, cache and refusal so those layers do not contaminate retrieval metrics. This was a deliberate cleanup: earlier versions had separate orchestration in `api/service.py`, `agent/generate.py`, `eval/run_eval.py` and `mcp_server/tools.py`, which made the evaluation prompt drift from production.
 
 ## 2. Data contract
 

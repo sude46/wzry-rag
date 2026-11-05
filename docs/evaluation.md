@@ -76,6 +76,22 @@ Hit@5 did **not** drop much because the correct skill was already in the top 5 f
 - Wrong-negative is 0.000 at K=5 for all three; the remaining errors are misses, not same-hero wrong-skill answers.
 - Fixed/heading chunks now carry `doc_ids` (fixed via source spans, heading via group membership), so retrieval results can be mapped back to documents. Citation quality still favors semantic chunks because each chunk has a single primary `doc_id`.
 
+### Why rerank was not adopted
+
+Three independent runs did not beat hybrid on the production Top5 metric. The identified cause was query-expansion text polluting the rerank candidate pool: the coarse stage used an expanded query while the cross-encoder saw the original query. A clean future experiment should retrieve from the original query or deduplicate the pool before reranking. The component remains behind `RETRIEVER=rerank`; this is a documented negative result, not a claim that reranking is universally useless.
+
+## Historical 3×3 ablation
+
+The original chunking/retriever matrix was measured with the older subject-level Hit@5, before the v2 doc-level gold. It is kept as historical evidence for the chunking decision, not as a doc-level benchmark:
+
+| Chunking \ Retriever | Vector | BM25 | Hybrid |
+|---|---:|---:|---:|
+| Fixed length | 0.889* | 0.931* | 1.000* |
+| Heading / paragraph | 0.903 | 0.764 | 0.986 |
+| Semantic / per-doc | 0.875 | 0.708 | 0.972 |
+
+\* Fixed-length chunks were judged by "text contains the target name" because they had no item metadata; that criterion is looser and not directly comparable. The production choice is semantic + hybrid because it has the best doc-level Recall@5 and citation-grade metadata; the fixed-length 1.000 is a known measurement artifact.
+
 ## Slang caveat
 
 The 15 slang questions are **in-vocabulary**: they are generated from the same `eval/synonyms.json` used by query expansion. The 1.00 slang Hit@5 means "the dictionary expansion works", not "the system generalizes to unseen slang". A held-out slang set is future work; do not claim generalization from this number.

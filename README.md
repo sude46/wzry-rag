@@ -13,11 +13,11 @@ A small, end-to-end vertical RAG project: crawl → clean → chunk → hybrid r
 Most RAG demos stop at "vector search + LLM". This project keeps the parts that decide whether a RAG system is trustworthy:
 
 - **Hybrid retrieval** (BM25 + vector + RRF) with a measured gain over the vector baseline.
-- **Evaluation-driven iteration**: an 80-question stratified set, a 3×3 chunking/retrieval ablation, and a documented negative result for reranking.
+- **Evaluation-driven iteration**: an 80-question stratified set, a historical 3×3 chunking/retrieval ablation, and a documented negative result for reranking.
 - **Grounded answers**: refusal gate, citation ids, citation validation, and a prompt that forbids unsupported tactics/combo advice.
 - **Multi-turn context**: query rewriting with entity-preservation fallback, Redis summary memory, and versioned answer cache.
 - **MCP server**: retrieval is exposed as tools so external agents can call it.
-- **Traceable requests**: every answer returns rewrite/retrieve/generate timings and retrieved doc ids.
+- **Traceable requests**: non-cached answers return rewrite/retrieve/generate timings and retrieved doc ids; cached answers return a cache-hit trace.
 
 ---
 
@@ -38,7 +38,7 @@ flowchart LR
     P --> T[Trace: timings, doc ids]
 ```
 
-The important design choice: **API, CLI, MCP and evaluation go through one `pipeline.py`**. The earlier code had separate orchestration paths, which made evaluation and production drift apart.
+The important design choice: **API, CLI and MCP go through one `pipeline.py`**. Evaluation is intentionally a retrieval-only harness that reuses the same retriever and answer prompt, but skips streaming, session memory, cache and refusal so those layers do not contaminate retrieval metrics. The earlier code had separate orchestration paths and different prompts, which made evaluation and production drift apart.
 
 ---
 
@@ -130,7 +130,7 @@ Every hit returns `doc_id`, `subject`, `type`, `text`, `source_url`, `score`. Se
 
 ### Why semantic chunks + hybrid retrieval?
 
-Semantic chunks keep one knowledge item per chunk and preserve complete metadata for citations. BM25 handles exact item/hero names; vectors handle paraphrases and slang. RRF fuses ranks without score calibration. The 3×3 ablation is in [`docs/evaluation.md`](docs/evaluation.md).
+Semantic chunks keep one knowledge item per chunk and preserve complete metadata for citations. BM25 handles exact item/hero names; vectors handle paraphrases and slang. RRF fuses ranks without score calibration. The historical 3×3 ablation is in [`docs/evaluation.md`](docs/evaluation.md), with its measurement caveats.
 
 ### Why not rerank in production?
 
@@ -146,7 +146,7 @@ Cache keys include `index_version`, `prompt_version`, model and K. Without that,
 
 ### Why MCP?
 
-The retriever is useful outside the web UI. MCP makes it callable from Claude Desktop/Cursor/other agents with a stable schema, while keeping provenance fields.
+The retriever is useful outside the web UI. MCP exposes it to MCP clients with a stable tool schema and keeps provenance fields. The local stdio config is in [`docs/mcp.md`](docs/mcp.md); Claude Desktop/Cursor end-to-end integration is manual, not CI-tested.
 
 ---
 
@@ -174,8 +174,9 @@ docs/                    # design / evaluation / MCP notes
 
 - Data is a **2016 snapshot**; many current heroes/items are missing. The project is a retrieval/engineering demo, not a current-game encyclopedia.
 - Evaluation is 80 questions and uses question-specific gold docs; confidence intervals and human calibration are future work.
-- Generation uses a 7B API model. Failure modes such as occasional over-refusal and false-premise handling are documented in the bad-case notes.
+- Generation uses a 7B API model. Known failure modes include occasional over-refusal and weak false-premise handling; the per-question bad-case notes are kept local.
 - No production traffic, auth, or rate limiting. The demo is not hardened for public multi-tenant use.
+- MCP tools are manually smoke-tested; Claude Desktop/Cursor end-to-end integration is not part of CI.
 - Raw evaluation outputs and per-question analysis are kept local; the repository publishes aggregate results only.
 
 ---
