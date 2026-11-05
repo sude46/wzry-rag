@@ -71,6 +71,7 @@ Key findings:
 cp .env.example .env
 # edit .env: set EMBED_API_KEY
 uv sync --extra dev
+# optional RAGAS stack: uv sync --extra eval
 ```
 
 ### 2. Build chunks and index

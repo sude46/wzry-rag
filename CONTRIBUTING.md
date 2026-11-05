@@ -3,6 +3,7 @@
 ```bash
 cp .env.example .env
 uv sync --extra dev
+# optional RAGAS: uv sync --extra eval
 make chunks
 make index
 make test
