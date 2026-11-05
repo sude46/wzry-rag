@@ -48,13 +48,13 @@ Dataset v2: 80 questions (25 mechanics / 20 items / 15 slang / 12 lore / 8 refus
 
 | Retriever (doc-level) | Hit@1 | Hit@3 | Hit@5 | Recall@5 | MRR |
 |---|---:|---:|---:|---:|---:|
-| Vector baseline | 0.778 | 0.847 | 0.861 | 0.861 | 0.816 |
-| **Hybrid (BM25 + Vector + RRF)** | **0.806** | **0.972** | **0.986** | **0.986** | **0.878** |
+| Vector baseline | 0.764 | 0.819 | 0.833 | 0.833 | 0.795 |
+| **Hybrid (BM25 + Vector + RRF)** | **0.792** | **0.958** | **0.986** | **0.986** | **0.867** |
 | Hybrid + bge reranker | 0.861 | 0.917 | 0.917 | 0.917 | 0.887 |
 
 Key findings:
 
-- The old subject-level Hit@5 was 0.986; the doc-level v2 Hit@5 is still 0.986, but **Hit@1 drops to 0.806** and MRR to 0.878. The leakage was in "retrieved this hero" vs "retrieved the requested skill", not in Top5 coverage.
+- The old subject-level Hit@5 was 0.986; the doc-level v2 Hit@5 is still 0.986, but **Hit@1 is 0.792** and MRR is 0.867. The leakage was in "retrieved this hero" vs "retrieved the requested skill", not in Top5 coverage.
 - The old "Recall@5 = 0.567" was hit density (same-subject chunks / K), not recall. The corrected one-gold Recall@5 is 0.986.
 - Reranking was rejected for the production Top5 after three runs: it improves Hit@1 (0.861) but loses Hit@5 (0.917 vs 0.986). The root cause is documented; the negative result is kept.
 - Slang is **in-vocabulary** (same dictionary used for expansion); 1.00 means the dictionary path works, not that it generalizes to unseen slang.

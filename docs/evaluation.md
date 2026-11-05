@@ -50,12 +50,12 @@ The old `Recall@5` implementation divided by `K` and counted same-subject chunks
 
 ## Results
 
-Doc-level metrics, semantic chunks, K=5. The numbers below are an offline replay of the last retrieval run against the v2 gold; `make eval` regenerates them when the embedding API is available.
+Doc-level metrics, semantic chunks, K=5. Latest run: 2026-11-05, `make eval` (hybrid) and `RETRIEVER=vector|rerank`.
 
 | Retriever | Hit@1 | Hit@3 | Hit@5 | Recall@5 | MRR | wrong_negative |
 |---|---:|---:|---:|---:|---:|---:|
-| Vector | 0.778 | 0.847 | 0.861 | 0.861 | 0.816 | 0.000 |
-| **Hybrid (BM25 + Vector + RRF)** | **0.806** | **0.972** | **0.986** | **0.986** | **0.878** | **0.000** |
+| Vector | 0.764 | 0.819 | 0.833 | 0.833 | 0.795 | 0.000 |
+| **Hybrid (BM25 + Vector + RRF)** | **0.792** | **0.958** | **0.986** | **0.986** | **0.867** | **0.000** |
 | Hybrid + bge-reranker-v2-m3 | 0.861 | 0.917 | 0.917 | 0.917 | 0.887 | 0.000 |
 
 ### What changed from the old subject-level result
@@ -63,16 +63,16 @@ Doc-level metrics, semantic chunks, K=5. The numbers below are an offline replay
 | Metric | Old subject-level | Doc-level v2 |
 |---|---:|---:|
 | Hit@5 | 0.986 | 0.986 |
-| Hit@1 | — | 0.806 |
-| MRR | 0.910 | 0.878 |
+| Hit@1 | — | 0.792 |
+| MRR | 0.910 | 0.867 |
 | "Recall@5" | 0.567 (invalid) | 0.986 |
 
 Hit@5 did **not** drop much because the correct skill was already in the top 5 for most questions. The leakage shows up in **Hit@1 and MRR**: the first result is often the hero's basic/equipment chunk, not the requested skill. This is a more useful finding than a fake Hit@5 drop.
 
 ### Interpretation
 
-- Hybrid retrieval is still the best overall: Hit@5 0.986 vs 0.861 vector.
-- Rerank has a higher Hit@1 (0.861 vs 0.806) but a lower Hit@5 (0.917 vs 0.986); it is not adopted for the production Top5. This is a real trade-off, not a blanket "rerank is bad".
+- Hybrid retrieval is still the best overall: Hit@5 0.986 vs 0.833 vector.
+- Rerank has a higher Hit@1 (0.861 vs 0.792) but a lower Hit@5 (0.917 vs 0.986); it is not adopted for the production Top5. This is a real trade-off, not a blanket "rerank is bad".
 - Wrong-negative is 0.000 at K=5 for all three; the remaining errors are misses, not same-hero wrong-skill answers.
 - Fixed/heading chunks now carry `doc_ids` (fixed via source spans, heading via group membership), so retrieval results can be mapped back to documents. Citation quality still favors semantic chunks because each chunk has a single primary `doc_id`.
 

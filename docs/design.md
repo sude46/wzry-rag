@@ -47,4 +47,4 @@ The MCP server exposes `search_knowledge`, `get_hero` and `get_item`. Each hit i
 - Single-process monolith; no queue or distributed index. Appropriate for a portfolio project and a small knowledge base.
 - 7B generation model: cheap, but occasional over-refusal and weak false-premise handling.
 - 2016 data snapshot: reproducible, but incomplete for current-game questions.
-- Doc-level Hit@5 is high (0.986) but Hit@1 is only 0.806; the remaining gap is "retrieved the right hero, wrong skill". Hard-negative and Hit@1/MRR metrics are part of the v2 evaluation.
+- Doc-level Hit@5 is high (0.986) but Hit@1 is only 0.792; the remaining gap is "retrieved the right hero, wrong skill". Hard-negative and Hit@1/MRR metrics are part of the v2 evaluation.
