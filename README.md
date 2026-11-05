@@ -1,5 +1,7 @@
 # wzry-rag
 
+[English](README.md) | [中文](README.zh-CN.md)
+
 **Evaluation-driven RAG + MCP knowledge service for Honor of Kings (王者荣耀).**
 
 A small, end-to-end vertical RAG project: crawl → clean → chunk → hybrid retrieval → grounded generation → citations → multi-turn memory → streaming API → MCP tools. The emphasis is not "another chatbot", but **measurable retrieval decisions and failure analysis**.
