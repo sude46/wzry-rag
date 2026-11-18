@@ -109,7 +109,8 @@ uv run python -m agent.generate
 docker compose up --build
 ```
 
-容器会挂载 `./chroma_db`，所以先在宿主机跑一次 `make index`。  
+容器会挂载 `./chroma_db`，所以先在宿主机跑一次 `make index`。
+
 生产式 Nginx 反代与多项目部署见 [`docs/deploy.md`](docs/deploy.md)。
 
 ---
