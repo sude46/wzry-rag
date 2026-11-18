@@ -104,7 +104,8 @@ uv run python -m agent.generate
 docker compose up --build
 ```
 
-The container mounts `./chroma_db`, so run `make index` once on the host first.
+The container mounts `./chroma_db`, so run `make index` once on the host first.  
+Production-style Nginx reverse proxy: [`docs/deploy.md`](docs/deploy.md).
 
 ---
 
